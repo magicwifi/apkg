@@ -1,0 +1,129 @@
+diff -Naur opkg-9c97d5ecd795709c8584e972bfdf3aee3a5b846d/libopkg/opkg_cmd.c /home/huangzhe/opkg/libopkg/opkg_cmd.c
+--- opkg-9c97d5ecd795709c8584e972bfdf3aee3a5b846d/libopkg/opkg_cmd.c	2014-07-10 21:25:35.000000000 +0800
++++ /home/huangzhe/opkg/libopkg/opkg_cmd.c	2014-10-29 17:56:18.379662947 +0800
+@@ -23,6 +23,12 @@
+ #include <fnmatch.h>
+ #include <signal.h>
+ #include <unistd.h>
++#include <curl/curl.h>
++#include <sys/wait.h>
++#include <sys/ioctl.h>
++#include <arpa/inet.h>
++#include <netinet/in.h>
++#include <net/if.h>
+ 
+ #include "opkg_conf.h"
+ #include "opkg_cmd.h"
+@@ -44,6 +50,41 @@
+ #include "opkg_configure.h"
+ #include "xsystem.h"
+ 
++char *
++get_iface_mac(const char *ifname)
++{
++	int r, s;
++	struct ifreq ifr;
++	char *hwaddr, mac[13];
++
++	strcpy(ifr.ifr_name, ifname);
++
++	s = socket(PF_INET, SOCK_DGRAM, 0);
++	if (-1 == s) {
++		return NULL;
++	}
++
++	r = ioctl(s, SIOCGIFHWADDR, &ifr);
++	if (r == -1) {
++		close(s);
++		return NULL;
++	}
++
++	hwaddr = ifr.ifr_hwaddr.sa_data;
++	close(s);
++	snprintf(mac, sizeof(mac), "%02X%02X%02X%02X%02X%02X", 
++			hwaddr[0] & 0xFF,
++			hwaddr[1] & 0xFF,
++			hwaddr[2] & 0xFF,
++			hwaddr[3] & 0xFF,
++			hwaddr[4] & 0xFF,
++			hwaddr[5] & 0xFF
++		);
++
++	return strdup(mac);
++}
++
++
+ static void
+ print_pkg(pkg_t *pkg)
+ {
+@@ -410,6 +451,8 @@
+      pkg_t *pkg;
+      opkg_intercept_t ic;
+      int r, err = 0;
++     CURL *curl;
++     CURLcode res;
+ 
+      opkg_msg(INFO, "Configuring unpacked packages.\n");
+ 
+@@ -447,6 +490,23 @@
+ 		    pkg->parent->state_status = SS_INSTALLED;
+ 		    pkg->state_flag &= ~SF_PREFER;
+ 		    opkg_state_changed++;
++
++		    curl = curl_easy_init();
++		    if(curl) {
++			curl_easy_setopt(curl, CURLOPT_URL, "http://openplatform.smbiztalk.cn/installing");
++			char *requesturl;
++			char *gw_id = get_iface_mac("br-lan");
++	  		sprintf_alloc(&requesturl, "imagename=%s&routermac=%s", pkg->name,gw_id);
++			curl_easy_setopt(curl, CURLOPT_POSTFIELDS,requesturl);
++
++			    res = curl_easy_perform(curl);
++			    if(res != CURLE_OK)
++	       			opkg_msg(NOTICE, "post fails\n");
++
++			    curl_easy_cleanup(curl);
++			    free(gw_id);
++  			}
++
+ 	       } else {
+ 		    err = -1;
+ 	       }
+@@ -792,6 +852,9 @@
+      pkg_t *pkg_to_remove;
+      pkg_vec_t *available;
+ 
++     CURL *curl;
++     CURLcode res;
++
+      done = 0;
+ 
+      signal(SIGINT, sigint_handler);
+@@ -826,8 +889,25 @@
+ 
+             if (opkg_remove_pkg(pkg_to_remove, 0))
+ 	         err = -1;
+-	    else
+-                 done = 1;
++	    else{
++		    curl = curl_easy_init();
++		    if(curl) {
++			curl_easy_setopt(curl, CURLOPT_URL, "http://openplatform.smbiztalk.cn/uninstalling");
++			char *requesturl;
++			char *gw_id = get_iface_mac("br-lan");
++	  		sprintf_alloc(&requesturl, "imagename=%s&routermac=%s", pkg->name,gw_id);
++			curl_easy_setopt(curl, CURLOPT_POSTFIELDS,requesturl);
++
++			    res = curl_easy_perform(curl);
++			    if(res != CURLE_OK)
++	       			opkg_msg(NOTICE, "post fails\n");
++
++			    curl_easy_cleanup(curl);
++			    free(gw_id);
++  			}
++
++                	done = 1;
++		}
+         }
+      }
+ 
